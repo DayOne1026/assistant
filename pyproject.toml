@@ -18,6 +18,9 @@ dependencies = [
     "langchain-community==0.2.*",
     "openai",  # DeepSeek 走 OpenAI 兼容端点所需（langchain-community 0.2 无原生 ChatDeepSeek）
     "langgraph==0.2.*",
+    "langgraph-checkpoint==2.1.*",  # 04b RedisSaver checkpointer（langgraph 0.2 配 <3.0.0）
+    "langgraph-checkpoint-redis==0.1.3",  # RedisSaver（0.2+ 硬要 checkpoint 3.x，与 langgraph 0.2 冲突）
+    "redisvl==0.5.1",  # checkpoint-redis 0.1.3 配套同步 SearchIndex（0.11+ async API 不兼容）
     "celery==5.*",
     "pgvector",
     "opentelemetry-api",
