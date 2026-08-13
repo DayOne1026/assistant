@@ -1,0 +1,28 @@
+# 基础设施服务（模块 01 起即可用；12 部署阶段再扩 api/worker/beat）
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: assistant
+      POSTGRES_DB: assistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/dev-password-change-me
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+
+volumes:
+  pgdata:
