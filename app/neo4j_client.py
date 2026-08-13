@@ -1,7 +1,16 @@
+import uuid
+
 import neo4j
 from neo4j import AsyncGraphDatabase
 
 from app.core.config import get_settings
+
+
+def neo4j_user_scope(user_id: uuid.UUID) -> dict:
+    """业务 Cypher 必须用该参数做首条过滤（03）：WHERE n.user_id = $user_id。
+    code review 必查项：禁止裸 MATCH。
+    """
+    return {"user_id": str(user_id)}
 
 
 class Neo4jClient:

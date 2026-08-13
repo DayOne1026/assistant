@@ -1,5 +1,6 @@
 import secrets
 import time
+import uuid
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -12,6 +13,13 @@ if redis.call('get', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+
+
+def redis_key(scope: str, user_id: uuid.UUID, *parts: str) -> str:
+    """统一 key 规范：app:{scope}:{user_id}[:part...]（03）。
+    所有模块禁止裸 key，一律经此生成；user_id 维度的 key 天然隔离。
+    """
+    return ":".join(["app", scope, str(user_id), *parts])
 
 
 class RedisClient:
