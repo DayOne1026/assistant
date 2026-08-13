@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]",
     "sqlalchemy[asyncio]==2.0.*",
     "asyncpg",
+    "bcrypt",  # 02 密码散列
     "alembic",
     "pydantic==2.7.*",
     "pydantic-settings",
@@ -36,3 +37,6 @@ packages = { find = { include = ["app*"] } }
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# session 级 async fixture（engine/redis）与测试同 loop，避免跨 loop 连接
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"

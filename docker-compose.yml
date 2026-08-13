@@ -10,6 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro  # 03：降级 bootstrap superuser 使 RLS 生效
 
   redis:
     image: redis:7

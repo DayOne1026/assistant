@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     timezone: str = "Asia/Shanghai"
 
-    # PostgreSQL（pgvector）
-    database_url: str = "postgresql+asyncpg://assistant:assistant@localhost:5432/assistant"
+    # PostgreSQL（pgvector）；应用用非 superuser 角色（03，RLS 对 superuser 无效）
+    database_url: str = "postgresql+asyncpg://assistant_app:assistant@localhost:5432/assistant"
     pg_echo: bool = False
     pool_size: int = 10
     max_overflow: int = 20
