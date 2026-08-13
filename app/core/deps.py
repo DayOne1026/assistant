@@ -44,6 +44,8 @@ async def get_current_user_isolated(
     return user
 
 
-def get_tool_registry():
-    """Agent 工具注册表（11）。"""
-    raise NotImplementedError("11 审计与安全模块实现")
+async def get_tool_registry(redis: RedisClient = Depends(get_redis)):
+    """Agent 工具注册表（11）。04b：全局单例（07-10 注册工具、11 补审计）。"""
+    from app.agent.tools import get_registry
+
+    return get_registry(redis)

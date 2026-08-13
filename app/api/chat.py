@@ -5,15 +5,17 @@ POST /conversations/{id}/messages（跑 AgentRunner）归 04b。统一响应经 
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.runner import get_runner
 from app.core.deps import get_current_user_isolated, get_db
 from app.core.pagination import Page, PageParams
 from app.core.response import ok
 from app.db.models.users import User
 from app.repos.conversations import message_repo
-from app.schemas.chat import ConversationCreate, ConversationResponse, MessageResponse
+from app.schemas.chat import ChatRequest, ConversationCreate, ConversationResponse, MessageResponse
 from app.services import conversation_service
 
 router = APIRouter(tags=["chat"])
@@ -38,6 +40,25 @@ async def list_conversations(
 ):
     p = PageParams(page=page, page_size=page_size)
     return ok(await conversation_service.list_conversations(db, user.id, p))
+
+
+@router.post("/conversations/{conv_id}/messages")
+async def post_message(
+    conv_id: uuid.UUID,
+    data: ChatRequest,
+    request: Request,
+    user: User = Depends(get_current_user_isolated),
+    db: AsyncSession = Depends(get_db),
+):
+    """发消息跑 AgentRunner；Accept: text/event-stream 时 SSE 流式（04b）。"""
+    await conversation_service.get_conversation(db, user.id, conv_id)  # 归属校验
+    runner = get_runner()
+    if "text/event-stream" in request.headers.get("accept", ""):
+        return StreamingResponse(
+            runner.stream(db, user.id, conv_id, data.content),
+            media_type="text/event-stream",
+        )
+    return ok(await runner.run(db, user.id, conv_id, data.content))
 
 
 @router.get("/conversations/{conv_id}/messages")
