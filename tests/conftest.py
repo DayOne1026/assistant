@@ -1,22 +1,62 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.db.models  # noqa: F401  注册 Base.metadata（create_all 建 users/refresh_tokens）
 from app.core.config import get_settings
+from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import get_db
+from app.db.tenant_policy import BUSINESS_TABLES, enable_rls
 from app.main import app
+from app.neo4j_client import close_neo4j, get_neo4j, init_neo4j
+from app.redis_client import close_redis, get_redis, init_redis
+from app.repos.users import user_repo
 
 settings = get_settings()
 
 
+@pytest.fixture(scope="session", autouse=True)
+async def _redis():
+    """session 级：初始化真实 Redis 单例（黑名单测试依赖），结束关闭。"""
+    await init_redis()
+    yield
+    await close_redis()
+
+
+@pytest.fixture(scope="session")
+async def neo4j_client():
+    """session 级：Neo4j 单例；连不上则 skip 隔离测试。"""
+    await init_neo4j()
+    client = await get_neo4j()
+    try:
+        await client.run("RETURN 1")
+    except Exception:
+        pytest.skip("Neo4j 不可达，跳过图谱隔离测试")
+    yield client
+    await close_neo4j()
+
+
 @pytest.fixture(scope="session")
 async def test_engine():
-    """测试库引擎：连 ASSISTANT_DATABASE_URL，用例前建表。"""
+    """测试库引擎：连 ASSISTANT_DATABASE_URL，用例前建表 + 启用 RLS（03 遗留 4/5）。
+
+    防呆：严禁直连 dev 库（drop_all 会清空业务数据）。须设
+    ASSISTANT_DATABASE_URL=.../assistant_test。
+    """
+    url = make_url(settings.database_url)
+    if url.database == "assistant":
+        raise RuntimeError("测试严禁直连 dev 库：请设 ASSISTANT_DATABASE_URL=.../assistant_test")
     engine = create_async_engine(settings.database_url, echo=settings.pg_echo)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        # 03 遗留 5：每张已注册业务表建表后启用 RLS（表名来自可信常量，未建表跳过）
+        existing = set(Base.metadata.tables.keys())
+        for table in BUSINESS_TABLES:
+            if table in existing:
+                await enable_rls(conn, table)
     yield engine
     await engine.dispose()
 
@@ -43,4 +83,15 @@ async def client(db):
     app.dependency_overrides.pop(get_db, None)
 
 
-# user 夹具（预置测试用户）等 02 users 表就绪后补充
+# user 夹具（预置测试用户，02）
+@pytest.fixture
+async def user(db):
+    u = await user_repo.create(
+        db,
+        email="user@example.com",
+        username="tester",
+        hashed_password=hash_password("pass1234"),
+        timezone="Asia/Shanghai",
+    )
+    await db.commit()
+    return u

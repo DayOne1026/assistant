@@ -10,7 +10,6 @@ from app.redis_client import close_redis, init_redis
 
 settings = get_settings()
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # startup：初始化 Redis/Neo4j 单例
@@ -42,8 +41,19 @@ def create_app() -> FastAPI:
     # 业务异常 → ApiResponse
     app.add_exception_handler(AppException, app_exception_handler)
 
+    # 路由（02）：认证与用户
+    from app.api import auth, users
+
+    app.include_router(auth.router, prefix=settings.api_prefix)
+    app.include_router(users.router, prefix=settings.api_prefix)
+
+    # 路由（04）：对话
+    from app.api import chat
+
+    app.include_router(chat.router, prefix=settings.api_prefix)
+
     # 中间件（11）：RateLimitMiddleware / HarmfulFilterMiddleware
-    # 路由注册（02-11）：各模块 router，prefix=settings.api_prefix
+    # 路由注册（03-11）：各模块 router，prefix=settings.api_prefix
 
     return app
 
