@@ -1,0 +1,95 @@
+/* 白底黑字极简主题（13 前端风格）：
+   背景 #fff / 正文 #1a1a1a / 次级 #6b7280 / 细边框 #e5e7eb / 强调靛蓝 #3b82f6
+   大量留白，细线分隔，几乎无阴影。 */
+
+:root {
+  --app-bg: #ffffff;
+  --app-text: #1a1a1a;
+  --app-text-secondary: #6b7280;
+  --app-border: #e5e7eb;
+  --app-accent: #3b82f6;
+
+  /* Element Plus 主色覆盖为靛蓝 */
+  --el-color-primary: #3b82f6;
+  --el-color-primary-light-3: #9dbdf9;
+  --el-color-primary-light-5: #9dc0fa;
+  --el-color-primary-light-7: #c4d9fc;
+  --el-color-primary-light-8: #d9e6fd;
+  --el-color-primary-light-9: #ebf2fe;
+  --el-color-primary-dark-2: #2f68c5;
+  --el-border-radius-base: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 细线分隔卡片 */
+.app-card {
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 16px;
+}
+
+.app-card--flat {
+  box-shadow: none;
+}
+
+/* 次级文字 */
+.app-muted {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+/* 细分割线 */
+.app-divider {
+  height: 1px;
+  background: var(--app-border);
+  border: none;
+  margin: 8px 0;
+}
+
+/* 页面容器 */
+.app-page {
+  padding: 20px 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.app-page__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+/* Element Plus 按钮/输入框去重阴影，回归平面 */
+.el-button {
+  box-shadow: none !important;
+}
+
+.el-input__wrapper,
+.el-textarea__inner {
+  box-shadow: 0 0 0 1px var(--app-border) inset !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--app-accent) inset !important;
+}

@@ -49,6 +49,10 @@ class RedisClient:
     async def delete(self, key: str) -> int:
         return await self._client.delete(key)
 
+    async def scan_keys(self, pattern: str) -> list[str]:
+        """SCAN 匹配 pattern 的 key（delete_account 清用户级 key 用，count 分批防阻塞）。"""
+        return [k async for k in self._client.scan_iter(match=pattern, count=200)]
+
     async def expire(self, key: str, seconds: int) -> bool:
         return bool(await self._client.expire(key, seconds))
 

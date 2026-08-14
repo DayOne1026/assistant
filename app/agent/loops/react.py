@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.agent.intent import INTENT_LLM
 from app.agent.tools import ToolRegistry
+from app.core.llm import ainvoke_json
 
 MAX_STEPS = 16  # 8 轮（thought+observation 各占一条）
 
@@ -50,7 +51,8 @@ def _build_think(registry: ToolRegistry):
             '只能输出 JSON：{"thought": "思考", "action": {"tool": "工具名", "params": {}}}'
             ' 或 {"thought": "思考", "action": {"answer": "最终答案"}}。能回答就 answer 直接收尾。'
         )
-        out = await INTENT_LLM.with_structured_output(ReActThink).ainvoke(prompt)
+        data = await ainvoke_json(INTENT_LLM, prompt)
+        out = ReActThink.model_validate(data)
         if out.action.answer is not None:
             return {"final": out.action.answer, "reply": out.action.answer}
         return {"steps": [*steps, {"thought": out.thought, "action": out.action.model_dump()}]}

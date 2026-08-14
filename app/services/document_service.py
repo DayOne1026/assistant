@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.exceptions import AppException, ErrorCode
 from app.core.pagination import Page, PageParams
 from app.core.storage import Storage
@@ -17,9 +18,11 @@ from app.tasks.rag_tasks import index_document
 
 
 async def upload(
-    db: AsyncSession, storage: Storage, user_id: uuid.UUID, file, title: str | None = None
+    db: AsyncSession, storage: Storage, user_id: uuid.UUID, file, title: str | None = None,
+    chunk_strategy: str = "auto",
 ) -> Document:
-    """存原始文件 → 建 documents(processing) → 同步索引（Celery 12 改 delay）。"""
+    """存原始文件 → 建 documents(processing) → 索引（strategy=auto/parent_child）。
+    config.indexing_async=True 走 Celery delay（worker 部署），否则同步（测试/无 worker）。"""
     data = await file.read()
     ext = Path(file.filename or "").suffix.lower()
     path = f"documents/{user_id}/{uuid.uuid4()}{ext}"
@@ -28,8 +31,13 @@ async def upload(
     doc = await document_repo.create(
         db, user_id, title or filename, filename, file.content_type, path
     )
-    # RLS 上下文已由路由 set_tenant_context；index_document 内部再设（幂等），commit 归此
-    await index_document(db, doc.id, path, user_id, commit=False)
+    if get_settings().indexing_async:
+        from app.tasks.rag_tasks import index_document_task
+
+        index_document_task.delay(str(doc.id), path, str(user_id), chunk_strategy)
+    else:
+        # RLS 上下文已由路由 set_tenant_context；index_document 内部再设（幂等），commit 归此
+        await index_document(db, doc.id, path, user_id, commit=False, strategy=chunk_strategy)
     await db.commit()
     return doc
 
@@ -49,12 +57,18 @@ async def get_document(db: AsyncSession, user_id: uuid.UUID, doc_id: uuid.UUID) 
     return doc
 
 
-async def soft_delete(db: AsyncSession, storage: Storage, user_id: uuid.UUID, doc_id: uuid.UUID) -> None:
-    """删除文档：删文件 + 记录（chunks FK CASCADE 级联）。二次确认归 07 通用模式。"""
-    doc = await get_document(db, user_id, doc_id)
+async def do_soft_delete(
+    db: AsyncSession, storage: Storage, user_id: uuid.UUID, doc_id: uuid.UUID
+) -> bool:
+    """二次确认后执行：删物理文件 + 软删记录（chunks 保留供恢复，检索排除软删，07）。
+
+    delete_service.confirm_delete 的 do_delete 回调；不存在返回 False（404）。
+    """
+    doc = await document_repo.get(db, user_id, doc_id)
+    if doc is None:
+        return False
     await asyncio.to_thread(storage.delete, doc.storage_path)
-    await document_repo.delete(db, user_id, doc_id)
-    await db.commit()
+    return await document_repo.soft_delete(db, user_id, doc_id)
 
 
 async def search(

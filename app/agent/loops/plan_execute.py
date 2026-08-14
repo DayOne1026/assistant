@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.agent.intent import INTENT_LLM
 from app.agent.tools import ToolRegistry
+from app.core.llm import ainvoke_json
 
 
 class PlanStep(BaseModel):
@@ -51,7 +52,10 @@ def _build_plan(registry: ToolRegistry):
             f"任务：{task}\n可用工具：{tools}\n"
             '输出 JSON 数组，3-6 步：[{"step": "做什么", "tool": "工具名或null", "params": {}}]'
         )
-        plan_list = await INTENT_LLM.with_structured_output(list[PlanStep]).ainvoke(prompt)
+        data = await ainvoke_json(INTENT_LLM, prompt)
+        if isinstance(data, dict):
+            data = data.get("plan", [])
+        plan_list = [PlanStep.model_validate(x) for x in data]
         return {"plan": plan_list, "idx": 0}
 
     return plan
@@ -89,7 +93,7 @@ async def replan(state: PlanExecuteState) -> dict:
         '输出 JSON：{"adjust": false} 或 {"adjust": true, "revised_plan": [剩余步骤数组]}'
     )
     try:
-        out = await INTENT_LLM.with_structured_output(ReplanOutput).ainvoke(prompt)
+        out = ReplanOutput.model_validate(await ainvoke_json(INTENT_LLM, prompt))
     except Exception:
         out = ReplanOutput(adjust=False)
     if out.adjust and out.revised_plan:

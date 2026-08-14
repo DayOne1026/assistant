@@ -5,13 +5,14 @@
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.memory.graph_extractor import extract_triples
 from app.agent.memory.graph_writer import GraphWriter
-from app.core.llm import get_chat_model
+from app.core.llm import ainvoke_json, get_chat_model
 from app.neo4j_client import Neo4jClient
 from app.redis_client import RedisClient, redis_key
 from app.repos.memory import preference_repo, profile_repo
@@ -164,8 +165,9 @@ class ProfileService:
         facts = await self._collect_facts(user_id)
         if facts:
             try:
-                llm = self._llm.with_structured_output(ProfileStruct)
-                out = await llm.ainvoke(f"根据以下用户记忆生成画像：\n" + "\n".join(facts))
+                out = ProfileStruct.model_validate(
+                    await ainvoke_json(self._llm, f"根据以下用户记忆生成画像：\n" + "\n".join(facts))
+                )
                 summary, structured = out.summary, out.model_dump(exclude={"summary"})
             except Exception:
                 summary, structured = "暂无足够记忆生成画像", None
@@ -173,8 +175,11 @@ class ProfileService:
             summary, structured = "暂无足够记忆生成画像", None
         await profile_repo.upsert(self._db, user_id, summary, structured, len(facts))
         await self._db.commit()
-        await self.invalidate_cache(user_id)
-        return await self.get_profile(user_id)
+        # ponytail: commit 后 SET LOCAL 上下文失效，不再回查 RLS 表；
+        # 直接用刚落盘的数据回填缓存并返回（避免 app/Celery 进程 RLS fail-closed）
+        obj = Profile(summary=summary, structured=structured, facts_count=len(facts), updated_at=datetime.now(UTC))
+        await self._redis.set(self._cache_key(user_id), obj.model_dump_json(), ex=PROFILE_CACHE_TTL)
+        return obj
 
     async def invalidate_cache(self, user_id: uuid.UUID) -> None:
         await self._redis.delete(self._cache_key(user_id))

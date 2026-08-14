@@ -1,0 +1,13 @@
+# Celery worker/beat 镜像（12 部署）：与 API 同依赖，入口不同
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+COPY app ./app
+COPY alembic.ini ./
+COPY init ./init
+RUN pip install --no-cache-dir .
+
+# compose 里按服务覆盖 command（worker / beat / flower）
+CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--without-gossip"]

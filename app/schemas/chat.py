@@ -11,6 +11,11 @@ class ConversationCreate(BaseModel):
     title: str | None = None
 
 
+class ConversationUpdate(BaseModel):
+    """对话改名。"""
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ConversationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,6 +47,7 @@ class MessageResponse(BaseModel):
     content: str
     tool_name: str | None
     attachments: list[Attachment] = []  # 历史图片引用（读取时后端补短期 URL，06）
+    wait_ms: int | None = None  # 回复等待耗时（毫秒，13 前端计时落库）
     created_at: datetime
 
 
@@ -49,8 +55,8 @@ class IntentResult(BaseModel):
     """意图识别结构化输出。"""
 
     intent_name: str  # 见 INTENTS 表
-    parameters: dict[str, Any]  # 实体/参数；路由后按意图 schema 二次校验
-    confidence: float = Field(ge=0, le=1)
+    parameters: dict[str, Any] = Field(default_factory=dict)  # 实体/参数；路由后按意图 schema 二次校验
+    confidence: float = Field(default=0.8, ge=0, le=1)
 
 
 class ChatRequest(BaseModel):
@@ -63,3 +69,4 @@ class ChatResponse(BaseModel):
     intent: IntentResult
     tool_calls: list[str] = []  # 本次调用的工具名
     attachments: list[Attachment] = []  # 图片/文件引用（图库检索/工具结果）
+    wait_ms: int | None = None  # 回显本次等待耗时

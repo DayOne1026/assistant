@@ -18,8 +18,10 @@ BUSINESS_TABLES = (
     "user_profiles",
     "documents",
     "document_chunks",
+    "images",
     "skills",
     "automation_rules",
+    "system_prompt_profiles",
     "user_integrations",
 )
 

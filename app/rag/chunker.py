@@ -8,6 +8,8 @@
 """
 
 import re
+import uuid
+
 import tiktoken
 
 _ENC = tiktoken.get_encoding("cl100k_base")
@@ -198,3 +200,30 @@ def chunk_parent_child(text: str, child_size: int = 200,
         child_idx += len(children)
         results.append({"parent": p_text, "parent_tokens": _tok(p_text), "children": children})
     return results
+
+
+def flatten_parent_child(groups: list[dict]) -> list[dict]:
+    """chunk_parent_child 嵌套输出 → 扁平行（蓝图 06 存储链路）。
+
+    parent 行不参与向量检索（group_id=parent，检索过滤；embedding 占位零向量）；
+    child 行 embed 检索，命中后 vector_search coalesce 返回 parent 大块给 LLM。
+    显式 id 预生成：child.parent_id 指向 parent 行 id，一次 bulk_insert 落库。
+    """
+    rows: list[dict] = []
+    for group in groups:
+        parent_id = uuid.uuid4()
+        rows.append(
+            {
+                "text": group["parent"], "group_id": "parent", "seq_in_group": 0,
+                "parent_id": None, "_id": parent_id, "_embed": False,
+            }
+        )
+        for child in group["children"]:
+            rows.append(
+                {
+                    "text": child["text"], "group_id": "child",
+                    "seq_in_group": child["index"], "parent_id": parent_id,
+                    "_id": uuid.uuid4(), "_embed": True,
+                }
+            )
+    return rows

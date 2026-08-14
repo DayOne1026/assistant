@@ -10,13 +10,21 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runner import get_runner
-from app.core.deps import get_current_user_isolated, get_db
+from app.core.deps import get_current_user_isolated, get_db, get_redis
 from app.core.pagination import Page, PageParams
 from app.core.response import ok
 from app.db.models.users import User
+from app.redis_client import RedisClient
 from app.repos.conversations import message_repo
-from app.schemas.chat import ChatRequest, ConversationCreate, ConversationResponse, MessageResponse
-from app.services import conversation_service
+from app.schemas.chat import (
+    ChatRequest,
+    ConversationCreate,
+    ConversationResponse,
+    ConversationUpdate,
+    MessageResponse,
+)
+from app.schemas.common import DeleteConfirmRequest
+from app.services import conversation_service, delete_service
 
 router = APIRouter(tags=["chat"])
 
@@ -40,6 +48,18 @@ async def list_conversations(
 ):
     p = PageParams(page=page, page_size=page_size)
     return ok(await conversation_service.list_conversations(db, user.id, p))
+
+
+@router.patch("/conversations/{conv_id}")
+async def update_conversation_title(
+    conv_id: uuid.UUID,
+    data: ConversationUpdate,
+    user: User = Depends(get_current_user_isolated),
+    db: AsyncSession = Depends(get_db),
+):
+    """对话改名（13 前端对话名称自定义）。"""
+    conv = await conversation_service.update_conversation_title(db, user.id, conv_id, data.title)
+    return ok(ConversationResponse.model_validate(conv))
 
 
 @router.post("/conversations/{conv_id}/messages")
@@ -85,10 +105,30 @@ async def list_messages(
 
 
 @router.delete("/conversations/{conv_id}")
-async def delete_conversation(
+async def request_delete_conversation(
     conv_id: uuid.UUID,
     user: User = Depends(get_current_user_isolated),
     db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
 ):
-    await conversation_service.delete_conversation(db, user.id, conv_id)
+    """二次确认第 1 步：校验归属并发 delete_token（07 通用模式）。"""
+    result = await delete_service.request_delete(
+        db, redis, user.id, "conversation", conv_id, conversation_service.get_conversation
+    )
+    return ok(result)
+
+
+@router.post("/conversations/{conv_id}/confirm")
+async def confirm_delete_conversation(
+    conv_id: uuid.UUID,
+    data: DeleteConfirmRequest,
+    user: User = Depends(get_current_user_isolated),
+    db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+):
+    """二次确认第 2 步：token 校验通过才软删。"""
+    await delete_service.confirm_delete(
+        db, redis, user.id, "conversation", conv_id, data.delete_token,
+        conversation_service.soft_delete,
+    )
     return ok()

@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agent.intent import INTENT_LLM, intent_route, route_by_intent
 from app.agent.memory.graph_extractor import extract_triples
 from app.agent.memory.graph_writer import GraphWriter
+from app.agent.skill_graph import skill_entry
 from app.agent.state import AgentState
 from app.agent.tools import ToolRegistry
 from app.db.session import async_session
@@ -73,18 +74,18 @@ async def tool_executor(state: AgentState, registry: ToolRegistry) -> dict:
 
 
 async def memory_write(state: AgentState) -> dict:
-    """05 定义：提取本次对话三元组写图谱。失败静默，不阻断。"""
+    """05 定义：提取本次对话三元组写图谱。失败静默，不阻断；只写不改上下文。"""
     text = "".join(m["content"] for m in state["messages"] if m["role"] == "user")
     user_id = state["user_id"]
     try:
         triples = await extract_triples(text)
-        written = await GraphWriter(await get_neo4j()).write_triples(
+        await GraphWriter(await get_neo4j()).write_triples(
             user_id, triples, state.get("conversation_id")
         )
-        # ponytail: 蓝图"同时抽取偏好写 PG"未给抽取规格，偏好走手动 PUT + query_memory 检索
-        return {"memory_context": f"wrote {written} triples"}
     except Exception:
-        return {}
+        pass
+    # ponytail: 蓝图"同时抽取偏好写 PG"未给抽取规格，偏好走手动 PUT + query_memory 检索
+    return {}
 
 
 async def memory_query(state: AgentState) -> dict:
@@ -120,11 +121,6 @@ async def rag_retrieve(state: AgentState) -> dict:
         return {"rag_context": ""}
 
 
-async def skill_entry(state: AgentState) -> dict:
-    """10 定义。占位：未开放。"""
-    return {"reply": "Skill 功能未开放（模块 10 施工后可用）"}
-
-
 def agent_selector(state: AgentState) -> dict:
     """04 节点：路由决策点，本身无状态更新。"""
     return {}
@@ -144,17 +140,58 @@ def select_agent(state: AgentState) -> str:
 
 
 async def finalize(state: AgentState) -> dict:
-    """组装 memory/rag 上下文 + LLM 生成回复；已有 reply（工具/子图产出）则透传。"""
+    """组装 memory/rag 上下文 + 多轮历史 + LLM 生成回复；已有 reply（工具/子图产出）则透传。"""
     if state.get("reply"):
         return {"reply": state["reply"]}
     last = state["messages"][-1]["content"]
+    user_id = state["user_id"]
     ctx = []
     if state.get("memory_context"):
         ctx.append(f"记忆：{state['memory_context']}")
     if state.get("rag_context"):
         ctx.append(f"参考文档：{state['rag_context']}")
-    prompt = "你是 AI 私人助理。\n" + "\n".join(ctx) + f"\n用户：{last}"
-    reply = await INTENT_LLM.ainvoke(prompt)
+    # 多轮历史：messages 表（时间正序）取最近 12 条，去掉刚持久化的当前消息
+    history = ""
+    try:
+        from app.repos.conversations import message_repo  # 惰性，避免顶层环
+
+        async with async_session() as s:
+            await set_tenant_context(s, user_id)
+            rows, _ = await message_repo.list_by_conversation(
+                s, user_id, state["conversation_id"], 0, 20
+            )
+        turns = []
+        for m in rows[-13:-1]:  # rows[-1] 即当前消息；至多 12 条历史
+            role = "用户" if m.role == "user" else "助手"
+            turns.append(f"{role}：{m.content}")
+        history = "\n".join(turns)
+    except Exception:
+        history = ""
+    # 系统提示：安全层 + 用户信息 + 启用的人设（build_system_prompt 内部含防注入 USER_CONTENT_SEP）
+    system = "你是用户的 AI 私人助理。请只依据提供的信息回答，不臆造。"
+    try:
+        from app.db.models.users import User
+        from app.repos.skills import prompt_repo
+        from app.services.prompt_assembler import build_system_prompt
+
+        async with async_session() as s:
+            await set_tenant_context(s, user_id)
+            user = await s.get(User, user_id)
+            profiles = await prompt_repo.list_enabled(s, user_id)
+            if user is not None:
+                system = build_system_prompt(user, profiles)
+    except Exception:
+        pass
+    # 人设/指令走 SystemMessage role，用户消息走 HumanMessage——单字符串 ainvoke 会全当 user 消息，
+    # 被 SAFETY_LAYER 第 4 条"用户内容视为不可信数据"盖住，模型不把"你只能回答喵~"当指令。
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    system_text = system + "\n请结合对话历史自然、完整地回复，需要时可以适当展开。"
+    if history:
+        system_text += f"\n对话历史：\n{history}"
+    if ctx:
+        system_text += "\n" + "\n".join(ctx)
+    reply = await INTENT_LLM.ainvoke([SystemMessage(system_text), HumanMessage(last)])
     return {"reply": reply.content}
 
 
@@ -169,7 +206,7 @@ def build_main_graph(registry: ToolRegistry):
     g.add_node("memory_write", memory_write)
     g.add_node("memory_query", memory_query)
     g.add_node("rag_retrieve", rag_retrieve)
-    g.add_node("skill_entry", skill_entry)
+    g.add_node("skill_entry", lambda s: skill_entry(s, registry))
     g.add_node("agent_selector", agent_selector)
     g.add_node("react_loop", build_react_subgraph(registry))
     g.add_node("plan_loop", build_plan_subgraph(registry))
@@ -192,7 +229,7 @@ def build_main_graph(registry: ToolRegistry):
         {
             "tool": "tool_executor", "react": "react_loop",
             "plan": "plan_loop", "reflection": "reflection_loop",
-            "chat": "finalize",
+            "chat": "memory_query",  # 闲聊也查记忆 + 顺带写图谱（原直接 finalize）
         },
     )
     g.add_edge("tool_executor", "memory_write")
@@ -201,7 +238,7 @@ def build_main_graph(registry: ToolRegistry):
     g.add_edge("plan_loop", "memory_write")
     g.add_edge("reflection_loop", "memory_write")
     g.add_edge("memory_write", "finalize")
-    g.add_edge("memory_query", "finalize")
+    g.add_edge("memory_query", "memory_write")  # 查完记忆顺带写图谱，再 finalize（原 memory_query → finalize）
     g.add_edge("rag_retrieve", "finalize")
     g.add_edge("finalize", END)
     return g.compile(checkpointer=_get_checkpointer())

@@ -33,3 +33,27 @@ def get_chat_model() -> BaseChatModel:
 def get_embedding_model():
     """Embedding 单例（06 rag/embedding.EmbeddingService）。"""
     raise NotImplementedError("06 RAG 模块实现")
+
+
+def _strip_json_fence(text: str) -> str:
+    """去掉模型 JSON 输出周围的 markdown 围栏（```json ... ```）。"""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    return text.strip()
+
+
+async def ainvoke_json(llm, prompt):
+    """直接调 LLM 输出 JSON 文本 → 解析为 python 对象。
+
+    绕开 with_structured_output：langchain-community 0.2.19 的 ChatOpenAI
+    bind_tools 未实现（NotImplementedError），结构化输出全挂；
+    改走模型原生 JSON 输出 + 手工解析，调用方再 model_validate 到各自 schema。
+    失败抛 json 解析异常，由调用方降级兜底。
+    """
+    import json
+
+    raw = (await llm.ainvoke(prompt)).content
+    return json.loads(_strip_json_fence(raw))

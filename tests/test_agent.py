@@ -76,11 +76,25 @@ def test_classify_confirm_input():
 
 
 def test_validate_intent_params_no_schema_lenient():
-    """07/05/06/10 schema 未建（INTENT_PARAM_SCHEMAS 空），宽松放行不降级。"""
+    """未注册参数 schema 的意图（query_* 等）宽松放行不降级。"""
+    r = IntentResult(intent_name="query_schedule", parameters={"start_at": "2026-09-01"}, confidence=0.9)
+    out = validate_intent_params(r)
+    assert out.parameters == {"start_at": "2026-09-01"}
+    assert out.confidence == 0.9
+
+
+def test_validate_intent_params_schema_strict():
+    """07 注册 create_schedule 后：缺必填参数 → 清空降级；参数完整 → 通过。"""
     r = IntentResult(intent_name="create_schedule", parameters={"title": "开会"}, confidence=0.9)
     out = validate_intent_params(r)
-    assert out.parameters == {"title": "开会"}
-    assert out.confidence == 0.9
+    assert out.parameters == {}
+    assert out.confidence == 0.0
+    r2 = IntentResult(
+        intent_name="create_schedule",
+        parameters={"title": "开会", "start_at": "2026-09-01T10:00:00+08:00"},
+        confidence=0.9,
+    )
+    assert validate_intent_params(r2).parameters == r2.parameters
 
 
 # --- 集成：POST messages 全链路（真实 LLM + checkpointer）---

@@ -18,7 +18,7 @@ class ExtractedTriple(BaseModel):
     object: str
     subject_type: EntityType
     object_type: EntityType
-    confidence: float = Field(ge=0, le=1)
+    confidence: float = Field(default=0.8, ge=0, le=1)  # 模型常不输出，缺省按 0.8
 
 
 class TripleExtraction(BaseModel):

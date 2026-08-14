@@ -7,10 +7,12 @@ from __future__ annotations：类体内方法名 list 遮蔽 builtin（同 repos
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.db.models.documents import Document, DocumentChunk
 
@@ -31,25 +33,29 @@ class DocumentRepo:
     async def get(
         self, db: AsyncSession, user_id: uuid.UUID, doc_id: uuid.UUID
     ) -> Document | None:
-        """归属校验：user_id + id 双过滤，跨用户读返回 None（RLS 兜底）。"""
+        """归属校验：user_id + id 双过滤，软删视为不存在（跨用户读返回 None）。"""
         return (
             await db.execute(
-                select(Document).where(Document.id == doc_id, Document.user_id == user_id)
+                select(Document).where(
+                    Document.id == doc_id, Document.user_id == user_id,
+                    Document.deleted_at.is_(None),
+                )
             )
         ).scalar_one_or_none()
 
     async def list(
         self, db: AsyncSession, user_id: uuid.UUID, offset: int, limit: int
     ) -> tuple[list[Document], int]:
+        where = [Document.user_id == user_id, Document.deleted_at.is_(None)]
         total = (
             await db.execute(
-                select(func.count()).select_from(Document).where(Document.user_id == user_id)
+                select(func.count()).select_from(Document).where(*where)
             )
         ).scalar_one()
         rows = (
             await db.execute(
                 select(Document)
-                .where(Document.user_id == user_id)
+                .where(*where)
                 .order_by(Document.created_at.desc())
                 .offset(offset)
                 .limit(limit)
@@ -57,11 +63,14 @@ class DocumentRepo:
         ).scalars().all()
         return list(rows), total
 
-    async def delete(self, db: AsyncSession, user_id: uuid.UUID, doc_id: uuid.UUID) -> bool:
+    async def soft_delete(
+        self, db: AsyncSession, user_id: uuid.UUID, doc_id: uuid.UUID
+    ) -> bool:
+        """软删文档（deleted_at=now，07 通用二次确认后调用）。chunks 保留供恢复，检索侧排除。"""
         doc = await self.get(db, user_id, doc_id)
         if doc is None:
             return False
-        await db.delete(doc)
+        doc.deleted_at = datetime.now().astimezone()
         await db.flush()
         return True
 
@@ -93,15 +102,30 @@ class ChunkRepo:
     async def vector_search(
         self, db: AsyncSession, user_id: uuid.UUID, query_vec: list[float], limit: int
     ) -> list[tuple]:
-        """pgvector 余弦检索，WHERE user_id 强制过滤（03）。返回 (id, document_id, chunk_index, content, score)。"""
+        """pgvector 余弦检索，WHERE user_id 强制过滤 + join 排除软删文档（03/07）。
+        只搜叶子块（排除 parent 大块；token/semantic 的 group_id 为 0..n 自增，child 为 'child'），
+        child 命中返回 parent 内容（coalesce，蓝图 06 parent-child）。
+        返回 (id, document_id, chunk_index, content, score)。"""
+        from sqlalchemy import or_
+
+        parent_c = aliased(DocumentChunk)
+        content_expr = func.coalesce(
+            select(parent_c.content).where(parent_c.id == DocumentChunk.parent_id).scalar_subquery(),
+            DocumentChunk.content,
+        ).label("content")
         score = DocumentChunk.embedding.cosine_distance(query_vec).label("score")
         rows = (
             await db.execute(
                 select(
                     DocumentChunk.id, DocumentChunk.document_id,
-                    DocumentChunk.chunk_index, DocumentChunk.content, score,
+                    DocumentChunk.chunk_index, content_expr, score,
                 )
-                .where(DocumentChunk.user_id == user_id)
+                .join(Document, DocumentChunk.document_id == Document.id)
+                .where(
+                    DocumentChunk.user_id == user_id,
+                    Document.deleted_at.is_(None),
+                    or_(DocumentChunk.group_id.is_(None), DocumentChunk.group_id != "parent"),
+                )
                 .order_by(score)
                 .limit(limit)
             )

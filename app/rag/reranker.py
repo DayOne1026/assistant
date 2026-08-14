@@ -8,7 +8,7 @@ import json as _json
 
 from pydantic import BaseModel, Field
 
-from app.core.llm import get_chat_model
+from app.core.llm import ainvoke_json, get_chat_model
 
 RERANK_LLM = get_chat_model()
 
@@ -80,7 +80,7 @@ async def rerank(query: str, candidates: list[str],
     text = "\n\n".join(f"[{i}] {doc[:300]}" for i, doc in enumerate(candidates))
     prompt = _RANKING_PROMPT + f"\n问题: {query}\n\n文档:\n{text}"
     try:
-        out = await llm.with_structured_output(_RerankResult).ainvoke(prompt)
+        out = _RerankResult.model_validate(await ainvoke_json(llm, prompt))
         items = sorted(out.items, key=lambda x: x.r, reverse=True)
         results = []
         for it in items[:top_k]:

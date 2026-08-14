@@ -1,29 +1,110 @@
-# 基础设施服务（模块 01 起即可用；12 部署阶段再扩 api/worker/beat）
+# 基础设施服务（模块 01 起即可用；12 部署阶段扩 api/worker/beat）
+# 首次启动：init/ 以 superuser 建 assistant_app 角色 + pgvector 扩展（03/06/12）
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: assistant
-      POSTGRES_PASSWORD: assistant
+      POSTGRES_PASSWORD: ${ASSISTANT_DB_PASSWORD:-assistant}
       POSTGRES_DB: assistant
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init:/docker-entrypoint-initdb.d:ro  # 03：降级 bootstrap superuser 使 RLS 生效
+      - ./init:/docker-entrypoint-initdb.d:ro  # 03：降级 bootstrap superuser 使 RLS 生效；12：vector 扩展
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis/redis-stack-server:latest  # RediSearch（RedisSaver checkpointer 依赖，04b）
     ports:
       - "6379:6379"
+    volumes:
+      - redisdata:/data  # AOF 持久化（12 备份）
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   neo4j:
     image: neo4j:5
     environment:
-      NEO4J_AUTH: neo4j/dev-password-change-me
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-dev-password-change-me}
     ports:
       - "7687:7687"
       - "7474:7474"
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p '${NEO4J_PASSWORD:-dev-password-change-me}' 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  api:
+    build: .
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: celery -A app.celery_app worker --loglevel=info --without-gossip
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: celery -A app.celery_app beat --loglevel=info
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # flower:  # 队列监控（可选，需 pip install "celery[flower]"）
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.worker
+  #   command: celery -A app.celery_app flower --port=5555
+  #   ports:
+  #     - "5555:5555"
+  #   env_file: .env
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
 
 volumes:
   pgdata:
+  redisdata:
+  neo4jdata:

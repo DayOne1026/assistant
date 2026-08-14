@@ -1,11 +1,14 @@
 """04 对话：AgentRunner（蓝图 04 runner.py）。全局单例。"""
 
+import time
 import uuid
 from collections.abc import AsyncIterator
 
+import openai
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools import ToolRegistry, get_registry
+from app.core.exceptions import AppException, ErrorCode
 from app.redis_client import redis_key
 from app.repos.conversations import message_repo
 from app.schemas.chat import ChatResponse, IntentResult
@@ -56,6 +59,7 @@ class AgentRunner:
     ) -> ChatResponse:
         """调图 → 持久化 user/assistant 消息 → 返回 ChatResponse。
         image_id：图片理解（VLM 描述注入）归 06，先忽略。
+        wait_ms：服务端 graph 处理耗时（毫秒），随 assistant 消息落库（13）。
         """
         # 0. 本轮是"确认/取消"？直接处理挂起动作，不走意图路由
         action = classify_confirm_input(content)
@@ -75,16 +79,32 @@ class AgentRunner:
             )
         # 1. 持久化用户消息
         await message_repo.create(db, conversation_id, user_id, "user", content)
-        # 2. 跑图
+        # 2. 跑图（显式重置回合态字段：checkpointer 会把上一轮 reply/intent/ctx 带过来，
+        #    不重置则 finalize 短路返回旧回复 / 拼入过期记忆）
         inputs = {
             "messages": [{"role": "user", "content": content}],
             "user_id": user_id,
             "conversation_id": conversation_id,
+            "reply": None,
+            "tool_results": [],
+            "memory_context": None,
+            "rag_context": None,
+            "intent": None,
         }
-        result = await self._graph.ainvoke(inputs, config=self._thread(user_id, conversation_id))
+        _t0 = time.monotonic()
+        try:
+            result = await self._graph.ainvoke(inputs, config=self._thread(user_id, conversation_id))
+        except AppException:
+            raise
+        except (openai.APIConnectionError, openai.APITimeoutError, openai.APIError) as e:
+            # 5001 LLM_ERROR：LLM 断连/超时转结构化错误，不让裸 500 漏给前端（错误码表 12）
+            raise AppException(
+                ErrorCode.LLM_ERROR, "AI 服务暂时不可用，请稍后重试", status_code=502
+            ) from e
+        wait_ms = int((time.monotonic() - _t0) * 1000)  # 服务端 graph 处理耗时（13）
         reply = result.get("reply") or "抱歉，我没有理解你的意思。"
-        # 3. 持久化 assistant 回复
-        await message_repo.create(db, conversation_id, user_id, "assistant", reply)
+        # 3. 持久化 assistant 回复（wait_ms 随消息落库）
+        await message_repo.create(db, conversation_id, user_id, "assistant", reply, wait_ms=wait_ms)
         await db.commit()
         intent_data = result.get("intent") or {
             "intent_name": "default_chat", "parameters": {}, "confidence": 0.0
@@ -92,7 +112,9 @@ class AgentRunner:
         tool_calls = [
             r.get("name") for r in result.get("tool_results", []) if isinstance(r, dict) and r.get("name")
         ]
-        return ChatResponse(reply=reply, intent=IntentResult(**intent_data), tool_calls=tool_calls)
+        return ChatResponse(
+            reply=reply, intent=IntentResult(**intent_data), tool_calls=tool_calls, wait_ms=wait_ms
+        )
 
     async def get_history(
         self, db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID

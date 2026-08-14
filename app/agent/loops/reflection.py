@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.agent.intent import INTENT_LLM
+from app.core.llm import ainvoke_json
 
 MAX_ITERATIONS = 3
 PASS_SCORE = 8
@@ -48,7 +49,7 @@ async def critique(state: ReflectionState) -> dict:
         f"任务：{_task(state)}\n草稿：{draft}\n"
         '输出 JSON：{"score": 0-10, "issues": ["问题"]}。score>=8 视为通过。'
     )
-    out = await INTENT_LLM.with_structured_output(CritiqueOutput).ainvoke(prompt)
+    out = CritiqueOutput.model_validate(await ainvoke_json(INTENT_LLM, prompt))
     if out.score >= PASS_SCORE:
         return {"final": draft, "reply": draft}
     return {"issues": out.issues, "iterations": iterations + 1}

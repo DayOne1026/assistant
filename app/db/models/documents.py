@@ -27,6 +27,7 @@ class Document(UserScopedMixin, TimestampMixin, Base):
     storage_path: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(20), default="processing")
     chunk_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DocumentChunk(UserScopedMixin, Base):

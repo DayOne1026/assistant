@@ -72,3 +72,32 @@ def decode_access_token(token: str) -> dict:
 def blacklist_key(jti: str) -> str:
     """03 规范收编 02 的裸 key：jwt 黑名单无 user_id 维度，用固定前缀。"""
     return f"app:jwt:blacklist:{jti}"
+
+
+# --- 图片展示短时 token（06 图片库：<img> 带不了 header，query token 方案） ---
+_IMAGE_TOKEN_TTL = 300  # 5 分钟
+
+
+def create_image_token(user_id: uuid.UUID, image_id: uuid.UUID) -> str:
+    """签发短时图片展示 token（scope=image + user_id + image_id + exp）。"""
+    return jwt.encode(
+        {
+            "scope": "image",
+            "sub": str(user_id),
+            "img": str(image_id),
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=_IMAGE_TOKEN_TTL),
+        },
+        settings.secret_key,
+        algorithm=_ALGORITHM,
+    )
+
+
+def verify_image_token(token: str, image_id: uuid.UUID) -> uuid.UUID | None:
+    """校验图片 token，返回 user_id；无效/过期/不匹配返回 None。"""
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[_ALGORITHM])
+    except PyJWTError:
+        return None
+    if payload.get("scope") != "image" or payload.get("img") != str(image_id):
+        return None
+    return uuid.UUID(payload["sub"])

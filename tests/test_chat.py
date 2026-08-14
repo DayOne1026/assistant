@@ -73,16 +73,30 @@ async def test_list_conversations_paginated(client):
     assert len(data["items"]) == 2
 
 
-async def test_delete_conversation(client, db):
+async def test_delete_conversation(client):
     await _register(client, REG_A)
     h = await _headers(client, EMAIL_A)
     conv_id = await _new_conv(client, h)
+    # 二次确认第 1 步 DELETE：校验归属并发 token，不真删
     r = await client.delete(f"{CONVERSATIONS}/{conv_id}", headers=h)
     assert r.status_code == 200
-    # 删除后归属校验 404
+    token = r.json()["data"]["delete_token"]
+    assert token
+    # 未确认：会话仍可访问（软删未生效）
+    assert (await client.get(f"{CONVERSATIONS}/{conv_id}/messages", headers=h)).status_code == 200
+    # 错误 token 拒（DELETE_NOT_CONFIRMED 4003）
+    r = await client.post(
+        f"{CONVERSATIONS}/{conv_id}/confirm", json={"delete_token": "wrong-token"}, headers=h
+    )
+    assert r.json()["code"] == "4003"
+    # 二次确认第 2 步 confirm：token 匹配 → 软删
+    r = await client.post(
+        f"{CONVERSATIONS}/{conv_id}/confirm", json={"delete_token": token}, headers=h
+    )
+    assert r.status_code == 200
+    # 删除后归属校验 404；列表排除软删
     assert (await client.get(f"{CONVERSATIONS}/{conv_id}/messages", headers=h)).status_code == 404
-    # FK CASCADE：messages 级联清空（RLS 上下文 = alice，可见自己表内行）
-    assert (await db.execute(select(func.count()).select_from(Message))).scalar_one() == 0
+    assert (await client.get(CONVERSATIONS, headers=h)).json()["data"]["total"] == 0
 
 
 # --- 消息持久化（04b 前用 repo 直写模拟 turn）---

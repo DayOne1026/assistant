@@ -23,6 +23,7 @@ dependencies = [
     "redisvl==0.5.1",  # checkpoint-redis 0.1.3 配套同步 SearchIndex（0.11+ async API 不兼容）
     "celery==5.*",
     "pgvector",
+    "jsonschema",  # 11 工具参数 JSON Schema 校验
     "opentelemetry-api",
     "opentelemetry-sdk",
 ]

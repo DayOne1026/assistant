@@ -244,5 +244,16 @@ async def test_api_documents_flow(client):
     assert r.status_code == 200
     assert r.json()["data"]["chunks"]
 
+    # 二次确认删除：DELETE 发 token → confirm 真删（软删）
     r = await client.delete(f"{P}/documents/{data['id']}", headers=headers)
     assert r.status_code == 200
+    token = r.json()["data"]["delete_token"]
+    r = await client.post(
+        f"{P}/documents/{data['id']}/confirm", json={"delete_token": token}, headers=headers
+    )
+    assert r.status_code == 200
+    # 软删后：详情 404、列表排除、检索排除（chunks 保留但 join 过滤）
+    assert (await client.get(f"{P}/documents/{data['id']}", headers=headers)).status_code == 404
+    assert (await client.get(f"{P}/documents", headers=headers)).json()["data"]["total"] == 0
+    r = await client.post(f"{P}/search", json={"query": "机器学习", "top_k": 3}, headers=headers)
+    assert r.json()["data"]["chunks"] == []

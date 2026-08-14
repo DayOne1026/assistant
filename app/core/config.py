@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     env: str = "dev"
     api_prefix: str = "/api/v1"
 
-    # JWT（02）
-    secret_key: str = "dev-secret-change-me"
+    # JWT（02）；dev 默认 ≥32 字节，生产必须 env 覆盖
+    secret_key: str = "dev-secret-change-me-to-32-bytes-plus"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     timezone: str = "Asia/Shanghai"
@@ -56,9 +56,23 @@ class Settings(BaseSettings):
     # 限流（11）
     rate_limit_max: int = 60
     rate_limit_window_seconds: int = 60
+    rate_limit_enabled: bool = True  # 测试环境关闭（conftest 设 ASSISTANT_RATE_LIMIT_ENABLED=false）
+    harmful_filter_enabled: bool = True  # 有害内容过滤开关
+
+    # SMTP（08 email 渠道）；未配置时 send_email 跳过
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "assistant@localhost"
 
     # OAuth（09）
     oauth_token_encryption_key: str = "dev-key-change-me"
+    oauth_redirect_base: str = "http://localhost:8000/api/v1/integrations"
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    outlook_oauth_client_id: str = ""
+    outlook_oauth_client_secret: str = ""
     jwt_blacklist_enabled: bool = True
 
     # 图片库（06，CLIP 本地向量）
@@ -68,8 +82,15 @@ class Settings(BaseSettings):
     # 文件存储（06）
     storage_root: str = "storage"
 
+    # RAG 索引（06/12）：True 走 Celery 异步索引（worker 部署后），False 同步（测试/无 worker）
+    indexing_async: bool = False
+
     # 联网搜索（06 web_search）
     tavily_api_key: str = ""
+
+    # OTel（12）
+    otel_enabled: bool = False
+    otel_service_name: str = "assistant"
 
 
 @lru_cache

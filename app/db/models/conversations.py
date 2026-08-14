@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,7 @@ class Conversation(UserScopedMixin, TimestampMixin, Base):
         Uuid, primary_key=True, server_default=func.gen_random_uuid()
     )
     title: Mapped[str] = mapped_column(String(200), default="新对话")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Message(UserScopedMixin, Base):
@@ -36,6 +37,7 @@ class Message(UserScopedMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tool_name: Mapped[str | None] = mapped_column(String(100))
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    wait_ms: Mapped[int | None] = mapped_column(Integer)  # 回复等待耗时（毫秒，13 前端计时落库）
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

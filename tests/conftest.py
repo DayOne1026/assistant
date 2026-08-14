@@ -1,3 +1,9 @@
+import os
+
+# 11：测试环境关闭限流（共享 testclient IP 会撞 60/min 窗口变 429）。
+# 必须在 import app.main（触发 get_settings 缓存）之前设置。
+os.environ["ASSISTANT_RATE_LIMIT_ENABLED"] = "false"
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.engine import make_url
@@ -7,12 +13,14 @@ import app.db.models  # noqa: F401  注册 Base.metadata（create_all 建 users/
 from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.base import Base
-from app.db.session import get_db
+from app.db.session import async_session, get_db
 from app.db.tenant_policy import BUSINESS_TABLES, enable_rls
 from app.main import app
 from app.neo4j_client import close_neo4j, get_neo4j, init_neo4j
 from app.redis_client import close_redis, get_redis, init_redis
 from app.repos.users import user_repo
+
+import uuid
 
 settings = get_settings()
 
@@ -95,3 +103,22 @@ async def user(db):
     )
     await db.commit()
     return u
+
+
+@pytest.fixture
+async def real_user():
+    """真实提交的用户（独立 session 落库）。
+
+    audit 写 tool_call_logs 用独立 session（async_session），只能看到已提交的用户——
+    db 级 user fixture 在回滚事务内，跨连接不可见，会触发 FK 违规。工具/审计测试用它。
+    """
+    async with async_session() as s:
+        u = await user_repo.create(
+            s,
+            email=f"real-{uuid.uuid4()}@example.com",
+            username=f"real{uuid.uuid4().hex[:8]}",
+            hashed_password=hash_password("pass1234"),
+            timezone="Asia/Shanghai",
+        )
+        await s.commit()
+        return u
