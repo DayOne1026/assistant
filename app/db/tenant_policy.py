@@ -15,6 +15,7 @@ BUSINESS_TABLES = (
     "conversations",
     "messages",
     "user_preferences",
+    "user_profiles",
     "documents",
     "document_chunks",
     "skills",

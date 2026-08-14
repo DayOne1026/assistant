@@ -52,6 +52,16 @@ def create_app() -> FastAPI:
 
     app.include_router(chat.router, prefix=settings.api_prefix)
 
+    # 路由（05）：记忆与知识图谱
+    from app.api import memory
+
+    app.include_router(memory.router, prefix=settings.api_prefix)
+
+    # 路由（06）：文档 RAG
+    from app.api import documents
+
+    app.include_router(documents.router, prefix=settings.api_prefix)
+
     # 中间件（11）：RateLimitMiddleware / HarmfulFilterMiddleware
     # 路由注册（03-11）：各模块 router，prefix=settings.api_prefix
 
