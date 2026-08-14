@@ -42,9 +42,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"
     vision_model: str = "qwen-vl-max"
 
-    # Embedding（06）
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dim: int = 1536
+    # Embedding（06）：本地 BGE（bge-small-zh-v1.5，512 维；本地已缓存，离线可用）
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"
+    embedding_dim: int = 512
 
     # Celery（08/10/12）
     celery_broker_url: str = "redis://localhost:6379/1"

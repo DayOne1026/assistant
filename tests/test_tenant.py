@@ -124,6 +124,7 @@ async def test_get_current_user_isolated_sets_context(db, user):
 # --- 蓝图迁移清单：10 张业务表均在清单内 ---
 
 def test_business_tables_listed():
-    assert len(BUSINESS_TABLES) == 10
+    assert len(BUSINESS_TABLES) == 11
     assert "schedules" in BUSINESS_TABLES
+    assert "user_profiles" in BUSINESS_TABLES  # 05：画像表也需 RLS（蓝图 05「RLS 纳入 03」）
     assert "refresh_tokens" not in BUSINESS_TABLES  # 不适用 RLS
