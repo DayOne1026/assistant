@@ -15,3 +15,4 @@ dist/
 *.egg-info/
 .idea/
 %USERPROFILE%
+project-deep-analysis
